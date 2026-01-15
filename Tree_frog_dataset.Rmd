@@ -1,0 +1,313 @@
+---
+title: "Stacking"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-05-06"
+---
+```{r}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(stacks)
+```
+
+```{r}
+glimpse(tree_frogs)
+```
+
+```{r}
+tree_frogs <- tree_frogs %>%
+  filter(!is.na(latency))
+  
+```
+
+```{r}
+tree_frogs %>%
+  ggplot(aes(x = age , y = latency , colour = treatment)) +
+  geom_point() +
+  theme_bw()
+  
+```
+
+```{r}
+tree_frogs_split <- initial_split(data = tree_frogs , prop = 0.8 , strata = latency)
+
+tree_frogs_train <- tree_frogs_split %>% training()
+tree_frogs_test <- tree_frogs_split %>% testing()
+```
+
+cross validation object
+```{r}
+tree_frogs_cv <- tree_frogs_train %>% vfold_cv(v=5 ,strata = latency)
+```
+
+rmse metric
+```{r}
+metric <- metric_set(rmse)
+```
+
+control_stack
+```{r}
+tree_frogs_ctrl_grid <- control_stack_grid()
+tree_frogs_ctrl_rs <- control_stack_resamples()
+
+
+```
+
+```{r}
+tree_frogs_rec1 <- tree_frogs_train %>%
+  recipe(formula = latency~.)
+```
+
+
+```{r}
+knn_model <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+knn_model
+```
+
+```{r}
+knn_rec <- tree_frogs_rec1 %>%
+  step_dummy(all_nominal_predictors())%>%
+  step_zv(all_predictors())%>%
+  step_impute_mean(all_numeric_predictors())%>%
+  step_normalize(all_numeric_predictors())
+
+knn_rec
+  
+```
+
+```{r}
+linear_regression_model <- linear_reg()%>% set_engine("lm")
+linear_regression_model
+```
+
+```{r}
+linear_regression_rec <- tree_frogs_rec1 %>%
+  step_dummy(all_nominal_predictors())%>%
+  step_zv(all_predictors())
+linear_regression_rec
+```
+
+```{r}
+svm_model <- svm_rbf(cost=tune() , rbf_sigma = tune())%>%
+  set_engine("kernlab")%>%
+  set_mode("regression")
+
+svm_model
+```
+```{r}
+svm_rec <- tree_frogs_rec1 %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_impute_mean(all_numeric_predictors()) %>%
+  step_corr(all_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+svm_rec
+```
+```{r}
+knn_wf <- workflow() %>%
+  add_model(knn_model) %>%
+  add_recipe(knn_rec)
+knn_wf
+
+```
+```{r}
+lin_reg_wf <- workflow()%>%
+  add_model(linear_regression_model)%>%
+  add_recipe(linear_regression_rec)
+
+lin_reg_wf
+```
+```{r}
+svm_wf <- workflow() %>%
+  add_model(svm_model) %>%
+  add_recipe(svm_rec)
+
+svm_wf
+```
+```{r}
+set.seed(2024)
+library(kknn)
+
+knn_res <-
+  tune_grid(
+    knn_wf,
+    resamples = rsample::vfold_cv(tree_frogs_test, v = 5, strata = "latency"),
+    metrics = metric,
+    grid = 10,
+    control = tree_frogs_ctrl_grid
+  )
+
+knn_res %>%show_best(n=10)
+```
+```{r}
+set.seed(2024)
+
+lin_reg_res
+```
+
+```{r}
+set.seed(2024)
+
+svm_res <- 
+  tune_grid(
+    svm_wf,
+    resamples = rsample::vfold_cv(tree_frogs_test, v = 5, strata = "latency"),
+    metrics = metric,
+    grid = 20,
+    control = tree_frogs_ctrl_grid
+  )
+
+svm_res%>%show_best(n=20)
+```
+```{r}
+set.seed(2024)
+
+lin_reg_res <-
+  fit_resamples(
+    lin_reg_wf,
+    resamples = rsample::vfold_cv(tree_frogs_test, v = 5, strata = "latency"),
+    metrics = metric,
+    control = tree_frogs_ctrl_rs
+  )
+
+lin_reg_res%>%show_best()
+  
+```
+```{r}
+stacks()
+```
+
+```{r}
+tree_frog_data_stack <-
+ stacks() %>%
+  add_candidates(knn_res) %>%
+  add_candidates(svm_res) %>%
+  add_candidates(lin_reg_res)
+```
+
+```{r}
+tree_frog_data_stack
+```
+```{r}
+tree_frog_data_stack %>% as_tibble()
+```
+```{r}
+tree_frog_model_stack <-
+  tree_frog_data_stack %>%
+  blend_predictions()
+
+tree_frog_model_stack
+```
+
+```{r}
+tree_frog_model_stack <-
+  tree_frog_data_stack %>%
+  blend_predictions(penalty = 0.01 , times = 5)
+
+tree_frog_model_stack
+```
+
+```{r}
+tree_frog_model_stack %>% autoplot(type = "weights")
+```
+
+```{r}
+tree_frog_model_stack <-
+  tree_frog_model_stack %>%
+  fit_members()
+
+tree_frog_model_stack
+```
+```{r}
+collect_parameters(tree_frog_model_stack , "svm_res")
+```
+```{r}
+collect_parameters(tree_frog_model_stack , "knn_res")
+collect_parameters(tree_frog_model_stack , "lin_reg_res")
+
+```
+```{r}
+tree_frogs_test <-  
+  tree_frogs_test %>%
+  bind_cols(predict(tree_frog_model_stack , .))
+
+tree_frogs_test
+```
+```{r}
+tree_frogs_test %>%
+  ggplot(aes(y = .pred...8 , x = latency)) +
+  geom_point() +
+  geom_abline(intercept = 0 , slope = 1 , color = "red") +
+  theme_bw()
+```
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
