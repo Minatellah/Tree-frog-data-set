@@ -3,6 +3,7 @@ title: "Stacking"
 output:
   pdf_document: default
   html_document: default
+date: 2024-05
 ```{r}
 
 ```
@@ -176,7 +177,7 @@ lin_reg_res
 ```
 
 ```{r}
-set.seed(123)
+set.seed(2024)
 
 svm_res <- 
   tune_grid(
@@ -273,6 +274,7 @@ tree_frogs_test %>%
 ```{r}
 
 ```
+
 
 
 
